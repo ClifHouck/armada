@@ -1,3 +1,5 @@
+import grpc
+
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from armada.operators.armada import ArmadaOperator
@@ -51,6 +53,38 @@ def submit_sleep_job():
     ]
 
 
+def _get_k8s_token():
+    "fake_token"
+
+
+class GrpcAuth(grpc.AuthMetadataPlugin):
+    def __init__(self, key):
+        self._key = key
+
+    def __call__(self, context, callback):
+        callback((("authorization", self._key),), None)
+
+
+def get_jwt():
+    k8s_acct_token = _get_k8s_token()
+
+    params = {
+        "client_id": "armada-prod.client",
+        "client_secret": "armada-prod.client",
+        "scope": "armada-prod",
+        "grant_type": "kubernetes",
+        "client_assertion": k8s_acct_token,
+    }
+
+
+def get_credentials(example_arg=None):
+    print(f"{example_arg}\n")
+    return grpc.composite_channel_credentials(
+        grpc.ssl_channel_credentials(),
+        grpc.metadata_call_credentials(GrpcAuth("Bearer" + get_jwt())),
+    )
+
+
 """
 This is an example of a Airflow dag that uses a BashOperator and an ArmadaOperator
 """
@@ -65,7 +99,16 @@ with DAG(
     The ArmadaOperator requires grpc.channel arguments for armada and
     the jobservice.
     """
-    armada_channel_args = {"target": "127.0.0.1:50051"}
+    armada_channel_args = {
+        "target": "127.0.0.1:50051",
+        "credentials_callback_args": {
+            "module_name": "examples.hello_armada",
+            "function_name": "get_credentials",
+            "function_kwargs": {
+                "example_arg": "test",
+            },
+        },
+    }
     job_service_channel_args = {"target": "127.0.0.1:60003"}
 
     """
